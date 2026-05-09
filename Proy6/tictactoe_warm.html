@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tres en Raya - IA + Webcam</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;700&display=swap');
+        
+        :root {
+            --bg-color: #faf8f5;
+            --accent-warm: #d96a4a;
+            --secondary-warm: #e6a15c;
+            --text-color: #5d5754;
+            --cell-bg: #ffffff;
+            --border-color: #e3dcd3;
+            --user-turn: #4caf50; /* Verde para tu turno */
+            --ai-turn: #f44336;   /* Rojo para la IA */
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Outfit', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h1 { color: var(--accent-warm); margin-bottom: 0.5rem; font-weight: 700; }
+        .subtitle { margin-bottom: 1.5rem; color: #a39e99; font-size: 0.9rem; }
+
+        /* --- ESTILOS DE LA CÁMARA --- */
+        .camera-container {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%; /* Cámara circular */
+            overflow: hidden;
+            margin-bottom: 20px;
+            border: 6px solid var(--border-color);
+            box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+            transition: all 0.4s ease;
+            position: relative;
+            background-color: #ddd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* Adapta el video al círculo */
+            transform: scaleX(-1); /* Efecto espejo para que se sienta natural */
+        }
+
+        /* Estados de turno */
+        .camera-container.turn-user {
+            border-color: var(--user-turn);
+            box-shadow: 0 0 20px rgba(76, 175, 80, 0.4);
+        }
+
+        .camera-container.turn-ai {
+            border-color: var(--ai-turn);
+            filter: grayscale(80%) blur(1px); /* Efecto visual cuando piensa la IA */
+            opacity: 0.7;
+        }
+
+        .game-container {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            grid-template-rows: repeat(3, 100px);
+            gap: 10px;
+            background: #dcd7cf;
+            padding: 10px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+        }
+
+        .cell {
+            background-color: var(--cell-bg);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .cell:hover { background-color: #fffaf0; }
+        .cell.x { color: #4a90d9; }
+        .cell.o { color: var(--accent-warm); }
+
+        .controls { margin-top: 2rem; display: flex; gap: 15px; }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            background-color: var(--accent-warm);
+            color: white;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        button:hover { background-color: #c45d3f; transform: translateY(-2px); }
+
+        #status { 
+            margin-top: 20px; 
+            font-weight: 700; 
+            font-size: 1.2rem;
+            padding: 5px 15px;
+            border-radius: 20px;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .status-user { color: var(--user-turn); }
+        .status-ai { color: var(--ai-turn); }
+    </style>
+</head>
+<body>
+
+    <h1>Tres en Raya</h1>
+    <p class="subtitle">Motor invencible con Poda Alfa-Beta</p>
+
+    <!-- Contenedor de la cámara web -->
+    <div class="camera-container" id="cameraBox">
+        <video id="webcam" autoplay playsinline></video>
+    </div>
+
+    <div id="status" class="status-user">Tu turno (X)</div>
+
+    <div class="game-container" id="board">
+        <div class="cell" onclick="makeMove(0)" id="c0"></div>
+        <div class="cell" onclick="makeMove(1)" id="c1"></div>
+        <div class="cell" onclick="makeMove(2)" id="c2"></div>
+        <div class="cell" onclick="makeMove(3)" id="c3"></div>
+        <div class="cell" onclick="makeMove(4)" id="c4"></div>
+        <div class="cell" onclick="makeMove(5)" id="c5"></div>
+        <div class="cell" onclick="makeMove(6)" id="c6"></div>
+        <div class="cell" onclick="makeMove(7)" id="c7"></div>
+        <div class="cell" onclick="makeMove(8)" id="c8"></div>
+    </div>
+
+    <div class="controls">
+        <button onclick="resetGame()">Reiniciar Partida</button>
+    </div>
+
+    <script>
+        let board = Array(9).fill('');
+        let gameActive = true;
+        let isAiThinking = false; // Bloquea los clics mientras la IA piensa
+
+        // ─────────────────────────────────────────────
+        // INICIALIZACIÓN DE LA CÁMARA
+        // ─────────────────────────────────────────────
+        async function initWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                const videoElement = document.getElementById('webcam');
+                videoElement.srcObject = stream;
+                // Iniciamos con el turno del usuario
+                updateTurnUI('user');
+            } catch (err) {
+                console.error("Error al acceder a la cámara: ", err);
+                document.getElementById('status').textContent = "No se detectó cámara. Jugando modo clásico.";
+                updateTurnUI('user');
+            }
+        }
+
+        // Llamar a la cámara apenas cargue la página
+        window.addEventListener('load', initWebcam);
+
+        // ─────────────────────────────────────────────
+        // LÓGICA DE INTERFAZ Y TURNOS
+        // ─────────────────────────────────────────────
+        function updateTurnUI(turn) {
+            const camBox = document.getElementById('cameraBox');
+            const statusTxt = document.getElementById('status');
+
+            if (turn === 'user') {
+                camBox.className = 'camera-container turn-user';
+                statusTxt.textContent = 'Tu turno (X)';
+                statusTxt.className = 'status-user';
+            } else if (turn === 'ai') {
+                camBox.className = 'camera-container turn-ai';
+                statusTxt.textContent = 'IA pensando... (O)';
+                statusTxt.className = 'status-ai';
+            } else {
+                // Fin del juego
+                camBox.className = 'camera-container';
+                statusTxt.className = '';
+            }
+        }
+
+        // ─────────────────────────────────────────────
+        // LÓGICA DEL JUEGO Y MINIMAX
+        // ─────────────────────────────────────────────
+        function checkWinner(b) {
+            const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+            for (let [a,b1,c] of lines) {
+                if (b[a] && b[a] === b[b1] && b[a] === b[c]) return b[a];
+            }
+            return b.includes('') ? null : 'empate';
+        }
+
+        function minimax(b, depth, isMaximizing, alpha, beta) {
+            const winner = checkWinner(b);
+            if (winner === 'O') return 10 - depth;
+            if (winner === 'X') return depth - 10;
+            if (winner === 'empate') return 0;
+
+            if (isMaximizing) {
+                let maxEval = -Infinity;
+                for (let i = 0; i < 9; i++) {
+                    if (b[i] === '') {
+                        b[i] = 'O';
+                        let eval = minimax(b, depth + 1, false, alpha, beta);
+                        b[i] = '';
+                        maxEval = Math.max(maxEval, eval);
+                        alpha = Math.max(alpha, eval);
+                        if (beta <= alpha) break;
+                    }
+                }
+                return maxEval;
+            } else {
+                let minEval = Infinity;
+                for (let i = 0; i < 9; i++) {
+                    if (b[i] === '') {
+                        b[i] = 'X';
+                        let eval = minimax(b, depth + 1, true, alpha, beta);
+                        b[i] = '';
+                        minEval = Math.min(minEval, eval);
+                        beta = Math.min(beta, eval);
+                        if (beta <= alpha) break;
+                    }
+                }
+                return minEval;
+            }
+        }
+
+        function getBestMove() {
+            let bestVal = -Infinity;
+            let move = -1;
+            for (let i = 0; i < 9; i++) {
+                if (board[i] === '') {
+                    board[i] = 'O';
+                    let moveVal = minimax(board, 0, false, -Infinity, Infinity);
+                    board[i] = '';
+                    if (moveVal > bestVal) {
+                        bestVal = moveVal;
+                        move = i;
+                    }
+                }
+            }
+            return move;
+        }
+
+        function makeMove(i) {
+            // Evitar clicks si el juego terminó, la celda está ocupada, o la IA está procesando
+            if (!gameActive || board[i] !== '' || isAiThinking) return;
+            
+            // Movimiento del Usuario
+            board[i] = 'X';
+            document.getElementById('c' + i).textContent = 'X';
+            document.getElementById('c' + i).classList.add('x');
+            
+            if (checkWinner(board)) {
+                endGame();
+                return;
+            }
+
+            // Cambiar la interfaz al turno de la IA
+            isAiThinking = true;
+            updateTurnUI('ai');
+
+            // Pequeño retraso para que se note el efecto visual en la cámara
+            setTimeout(() => {
+                let aiMove = getBestMove();
+                if (aiMove !== -1) {
+                    board[aiMove] = 'O';
+                    document.getElementById('c' + aiMove).textContent = 'O';
+                    document.getElementById('c' + aiMove).classList.add('o');
+                }
+
+                if (checkWinner(board)) {
+                    endGame();
+                } else {
+                    // Si el juego sigue, regresamos el turno al usuario
+                    isAiThinking = false;
+                    updateTurnUI('user');
+                }
+            }, 600); // 600 milisegundos de delay
+        }
+
+        function endGame() {
+            gameActive = false;
+            isAiThinking = false;
+            updateTurnUI('end'); // Quitamos los bordes de la cámara
+            const winner = checkWinner(board);
+            document.getElementById('status').textContent = winner === 'empate' ? '¡Es un empate!' : (winner === 'O' ? '¡La IA te ha ganado!' : '¡Ganaste!');
+        }
+
+        function resetGame() {
+            board = Array(9).fill('');
+            gameActive = true;
+            isAiThinking = false;
+            updateTurnUI('user');
+            
+            for(let i=0; i<9; i++) {
+                const cell = document.getElementById('c' + i);
+                cell.textContent = '';
+                cell.className = 'cell';
+            }
+        }
+    </script>
+</body>
+</html>
